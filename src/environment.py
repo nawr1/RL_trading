@@ -7,8 +7,10 @@ import pandas as pd
 class OptimalExecutionEnv(gym.Env):
     metadata = {'render_modes': ['human']}
     # ── Market-impact / penalty hyper-params ──────────────────────────────────
-    IMPACT_ETA   = 0.001   # linear temporary impact coefficient
-    URGENCY_COEF = 0.10    # penalty fraction for unsold inventory at deadline
+    IMPACT_ETA   = 0.002
+    URGENCY_COEF = 0.30
+    TWAP_BONUS   = 0.15
+    REGIME_COEF  = 0.05
 
     def __init__(
         self,
@@ -26,20 +28,17 @@ class OptimalExecutionEnv(gym.Env):
         self.initial_inventory = total_to_sell
         self.reward_scale    = reward_scale
 
-        # Pre-compute matrix powers for CK (speeds up step)
         self._A5 = np.linalg.matrix_power(self.transmat, 5)
 
         self.action_space      = spaces.Box(low=0.0, high=1.0,
                                             shape=(1,), dtype=np.float32)
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf,
                                             shape=(15,), dtype=np.float32)
-        # State (initialised in reset)
         self.current_step  = 0
         self.start_tick    = 0
         self.inventory     = self.initial_inventory
 
     def _ck_probs(self, regime: int):
-        """Return one-step and five-step transition probabilities."""
         e_t = np.zeros(len(self.transmat))
         e_t[regime] = 1.0
         p1 = e_t @ self.transmat
@@ -47,7 +46,8 @@ class OptimalExecutionEnv(gym.Env):
         return p1, p5
 
     def _next_observation(self) -> np.ndarray:
-        idx = self.start_tick + self.current_step
+        # Clamp index pour éviter out-of-bounds en fin d'épisode
+        idx = min(self.start_tick + self.current_step, len(self.df) - 1)
         row = self.df.iloc[idx]
         regime = int(row['Regime'])
         p1, p5 = self._ck_probs(regime)
@@ -76,43 +76,66 @@ class OptimalExecutionEnv(gym.Env):
         return self._next_observation(), {}
 
     def step(self, action):
+        # 1. Données marché
         idx   = self.start_tick + self.current_step
-        price = float(self.df.iloc[idx]['Close'])
-        vol   = float(self.df.iloc[idx].get('Volatility', 0.0))
-        if self.current_step == self.T - 1:
-            amount = self.inventory            # sell everything left
-        else:
-            amount = float(np.clip(action[0], 0.0, 1.0)) * self.inventory
+        row   = self.df.iloc[idx]
+        price = float(row['Close'])
 
+        # 2. Action robuste
+        action_val = np.reshape(np.asarray(action), -1)[0]
+
+        # 3. Quantité à vendre
+        if self.current_step == self.T - 1:
+            amount = self.inventory
+        else:
+            amount = float(np.clip(action_val, 0.0, 1.0)) * self.inventory
         amount = max(amount, 0.0)
-        #   effective_price = price * (1 – η * amount/initial)
-        impact_ratio   = amount / (self.initial_inventory + 1e-9)
-        effective_price = price * (1.0 - self.IMPACT_ETA * impact_ratio)
+
+        # 4. Impact de marché quadratique
+        impact_ratio    = amount / (self.initial_inventory + 1e-9)
+        effective_price = price * (1.0 - self.IMPACT_ETA * impact_ratio ** 2)
         revenue         = amount * effective_price
 
-        self.inventory -= amount
+        # 5. Reward de base
         reward = revenue / self.reward_scale
 
+        # 6. Bonus vs TWAP
+        twap_ref = price
+        if amount > 1e-4 and effective_price > twap_ref * 0.995:
+            reward += self.TWAP_BONUS * (effective_price - twap_ref * 0.995) * amount / self.reward_scale
+
+        # 7. Bonus/Malus régime HMM
+        regime    = int(row['Regime'])
+        time_left = (self.T - self.current_step) / self.T
+        if regime == 0:
+            reward += self.REGIME_COEF * amount / (self.initial_inventory + 1e-9)
+        elif regime == 2 and time_left > 0.3:
+            reward += self.REGIME_COEF * 0.5 * (1 - impact_ratio)
+
+        # 8. Mise à jour inventaire
+        self.inventory    -= amount
         self.current_step += 1
         done = (self.current_step >= self.T) or (self.inventory < 1e-4)
 
-        # Urgency penalty: unsold inventory * fraction * current price
+        # 9. Pénalité urgence
         if done and self.inventory > 1e-3:
             penalty = (self.inventory * price * self.URGENCY_COEF) / self.reward_scale
             reward -= penalty
-
         obs = self._next_observation()
+
         info = {
             'price':     price,
             'amount':    amount,
             'revenue':   revenue,
             'inventory': self.inventory,
+            'regime':    regime,
         }
+
         return obs, reward, done, False, info
 
     def render(self, mode='human'):
-        idx = self.start_tick + self.current_step - 1
-        price = float(self.df.iloc[idx]['Close']) if idx < len(self.df) else 0.0
+        idx = min(self.start_tick + self.current_step - 1, len(self.df) - 1)
+        price = float(self.df.iloc[idx]['Close'])
         print(f"Step {self.current_step:>3d}/{self.T} | "
               f"Inv: {self.inventory:.4f} | "
               f"Price: {price:,.1f}")

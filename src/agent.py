@@ -103,15 +103,15 @@ def make_env(df, transmat, T=24, total_to_sell=10.0):
 
 
 def train(
-    total_timesteps: int = 500_000,
+    total_timesteps: int = 500_000,     
     T: int = 24,
     total_to_sell: float = 10.0,
     n_envs: int = 4,
-    learning_rate: float = 3e-4,
-    clip_range: float = 0.2,
-    ent_coef: float = 0.01,
-    batch_size: int = 512,
-    n_epochs: int = 10,
+    learning_rate: float = 1e-4,       
+    clip_range: float = 0.15,          
+    ent_coef: float = 0.02,            
+    batch_size: int = 256,             
+    n_epochs: int = 15,                
 ):
     df, transmat = load_data()
 
@@ -176,11 +176,11 @@ def train(
         tb_log_name="ppo_ck_execution",
         progress_bar=True,
     )
-    model_path = os.path.join(MODEL_DIR, "ppo_final")
+    model_path = os.path.join(MODEL_DIR, "ppo_ck_impact_v1")
     model.save(model_path)
-    train_envs.save(os.path.join(MODEL_DIR, "vec_normalize.pkl"))
+    train_envs.save(os.path.join(MODEL_DIR, "vec_normalize_impact.pkl"))
     print(f"\nModel saved → {model_path}.zip")
-    print(f"VecNormalize saved → {MODEL_DIR}/vec_normalize.pkl")
+    print(f"VecNormalize saved → {MODEL_DIR}/vec_normalize_impact.pkl")
 
     return model, train_envs, df_train, df_eval, transmat
 
