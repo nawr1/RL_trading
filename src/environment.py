@@ -46,11 +46,18 @@ class OptimalExecutionEnv(gym.Env):
         return p1, p5
 
     def _next_observation(self) -> np.ndarray:
-        # Clamp index pour éviter out-of-bounds en fin d'épisode
         idx = min(self.start_tick + self.current_step, len(self.df) - 1)
         row = self.df.iloc[idx]
         regime = int(row['Regime'])
-        p1, p5 = self._ck_probs(regime)
+        
+        p1,p5=self._ck_probs(regime)
+        
+        '''
+        Pour faire ablation on ignore les probabilités , les mettre à zero
+            p1 = [0.0, 0.0, 0.0]
+            p5 = [0.0, 0.0, 0.0]
+            
+        '''
 
         obs = np.array([
             row['Close'] / 100_000,

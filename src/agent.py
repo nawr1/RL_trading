@@ -176,9 +176,9 @@ def train(
         tb_log_name="ppo_ck_execution",
         progress_bar=True,
     )
-    model_path = os.path.join(MODEL_DIR, "ppo_ck_impact_v1")
+    model_path = os.path.join(MODEL_DIR, "ppo_ck_impact_v1") # nom pour ablation : ppo_ablation_no_ck
     model.save(model_path)
-    train_envs.save(os.path.join(MODEL_DIR, "vec_normalize_impact.pkl"))
+    train_envs.save(os.path.join(MODEL_DIR, "vec_normalize_impact.pkl")) # vec_normalize_ablation.pkl
     print(f"\nModel saved → {model_path}.zip")
     print(f"VecNormalize saved → {MODEL_DIR}/vec_normalize_impact.pkl")
 
